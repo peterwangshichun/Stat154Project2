@@ -1,0 +1,496 @@
+---
+title: "Modeling"
+author: "Shichun Wang"
+date: "April 26th, 2019"
+output: html_document
+---
+
+```{r, include=FALSE}
+source("Preparation.R")
+library(ROCR)
+```
+
+##(a): Classification
+###Model Selection
+We do model selection using CV error. Note that our data to test ratio is 2:1, so to get the best approximation we will do a 3 fold CV to get the same data vs test ratio (and a small K also speeds up the process). We do this for two splitting method, with the first method grid set to 10 by 10 and second method grid set to 30 by 30.
+
+```{r}
+#Splitting Method A
+train_set_bind_A = rbind(data_train_A, data_validation_A) %>% select(c(X, Y, CORR, NDAI, AN, ExpertLabel))
+train_set_A = rbind(data_train_A, data_validation_A) %>% select(c(X, Y, CORR, NDAI, AN))
+test_set_A = data_test_A %>% select(c(X, Y, CORR, NDAI, AN, ExpertLabel))
+#Splitting Method B
+train_set_bind_B = rbind(data_train_B, data_validation_B) %>% select(c(X, Y, CORR, NDAI, AN, ExpertLabel))
+train_set_B = rbind(data_train_B, data_validation_B) %>% select(c(X, Y, CORR, NDAI, AN))
+test_set_B = data_test_B %>% select(c(X, Y, CORR, NDAI, AN, ExpertLabel))
+```
+
+####LDA, QDA, PCA-LDA, PCA-QDA
+```{r}
+LDA_CV_A = CVgeneric("lda", PCA = F, K = 3, 
+                     train_set = train_set_A, 
+                     labels = train_set_bind_A$ExpertLabel, split_method = "A")
+LDA_CV_B = CVgeneric("lda", PCA = F, K = 3, 
+                     train_set = train_set_B, 
+                     labels = train_set_bind_B$ExpertLabel, split_method = "B")
+PCALDA_CV_A = CVgeneric("lda", PCA = T, K = 3, 
+                     train_set = train_set_A, 
+                     labels = train_set_bind_A$ExpertLabel, split_method = "A")
+PCALDA_CV_B = CVgeneric("lda", PCA = T, K = 3, 
+                     train_set = train_set_B, 
+                     labels = train_set_bind_B$ExpertLabel, split_method = "B")
+QDA_CV_A = CVgeneric("qda", PCA = F, K = 3, 
+                     train_set = train_set_A, 
+                     labels = train_set_bind_A$ExpertLabel, split_method = "A")
+QDA_CV_B = CVgeneric("qda", PCA = F, K = 3, 
+                     train_set = train_set_B, 
+                     labels = train_set_bind_B$ExpertLabel, split_method = "B")
+PCAQDA_CV_A = CVgeneric("qda", PCA = T, K = 3, 
+                     train_set = train_set_A, 
+                     labels = train_set_bind_A$ExpertLabel, split_method = "A")
+PCAQDA_CV_B = CVgeneric("qda", PCA = T, K = 3, 
+                     train_set = train_set_B, 
+                     labels = train_set_bind_B$ExpertLabel, split_method = "B")
+LDAQDA_results = list(LDA_CV_A, LDA_CV_B, PCALDA_CV_A, PCALDA_CV_B, QDA_CV_A, QDA_CV_B, PCAQDA_CV_A, PCAQDA_CV_B)
+```
+
+####Logistic
+```{r}
+glm_CV_A = CVgeneric("glm", PCA = F, K = 3, 
+                     train_set = train_set_A, 
+                     labels = train_set_bind_A$ExpertLabel, split_method = "A")
+glm_CV_B = CVgeneric("glm", PCA = F, K = 3, 
+                     train_set = train_set_B, 
+                     labels = train_set_bind_B$ExpertLabel, split_method = "B")
+PCAglm_CV_A = CVgeneric("glm", PCA = T, K = 3, 
+                     train_set = train_set_A, 
+                     labels = train_set_bind_A$ExpertLabel, split_method = "A")
+PCAglm_CV_B = CVgeneric("glm", PCA = T, K = 3, 
+                     train_set = train_set_B, 
+                     labels = train_set_bind_B$ExpertLabel, split_method = "B")
+glm_results = list(glm_CV_A, glm_CV_B, PCAglm_CV_A, PCAglm_CV_B)
+```
+
+Before we check out SVM and random forest, we need to decide which splitting method to use, since SVM and rf are time consuming. Also, we will need to look at whether PCA will make a difference. We pick several of our best results so far before calculating the test accuracies.
+
+```{r}
+accuracies_LDAQDA = matrix(0, nrow = length(LDAQDA_results), ncol = 3)
+method = numeric(length(LDAQDA_results))
+split = rep(x = c("A", "B"), length(LDAQDA_results)/2)
+average_accuracies = numeric(length(LDAQDA_results))
+for (i in 1:length(LDAQDA_results)){
+  accuracies_LDAQDA[i,] = LDAQDA_results[[i]]$Accuracies
+  average_accuracies[i] = LDAQDA_results[[i]]$AverageAccuracy
+  method[i] = paste(LDAQDA_results[[i]]$method, "-", split[i], sep = "")
+}
+LDAQDA_df = cbind(method,average_accuracies, data.frame(accuracies_LDAQDA))
+colnames(LDAQDA_df) = c("Method", "Average", "Fold1","Fold2","Fold3")
+
+
+accuracies_glm = matrix(0, nrow = length(glm_results), ncol = 3)
+method = numeric(length(glm_results))
+split = rep(x = c("A", "B"), length(glm_results)/2)
+average_accuracies = numeric(length(glm_results))
+for (i in 1:length(glm_results)){
+  accuracies_glm[i,] = glm_results[[i]]$Accuracies
+  average_accuracies[i] = glm_results[[i]]$AverageAccuracy
+  method[i] = paste(glm_results[[i]]$method, "-", split[i], sep = "")
+}
+glm_df = cbind(method,average_accuracies, data.frame(accuracies_glm))
+colnames(glm_df) = c("Method", "Average", "Fold1","Fold2","Fold3")
+```
+
+```{r}
+ggplot(LDAQDA_df %>% gather(key = "Fold", value ="Accuracy", -c(Method, Average)),
+       aes(x = Fold, y = Accuracy, color=Fold, fill = Fold)) + 
+  geom_bar(stat="identity", alpha = 0.7) + geom_hline(aes(yintercept = Average), size = 1)+
+  facet_grid(. ~ Method, scales='free_x', space='free_x') +
+  theme_bw() + coord_cartesian(ylim = c(0.8, 1)) +
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 30, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 20, face = "bold")
+    ) +
+  labs(title = "LDA, QDA Results", x = "Fold Number", y = "Fold Accuracy\n(Zoomed in)")
+#ggsave("LDAQDAResults.png", width = 12, height = 6)
+
+ggplot(glm_df %>% gather(key = "Fold", value ="Accuracy", -c(Method, Average)),
+       aes(x = Fold, y = Accuracy, color=Fold, fill = Fold)) + 
+  geom_bar(stat="identity", alpha = 0.7) + geom_hline(aes(yintercept = Average), size = 1)+
+  facet_grid(. ~ Method, scales='free_x', space='free_x') +
+  theme_bw() + coord_cartesian(ylim = c(0.8, 1)) +
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 30, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 20, face = "bold")
+    ) +
+  labs(title = "Logistic Regression Results", x = "Fold Number", y = "Fold Accuracy\n(Zoomed in)")
+#ggsave("glmResults.png", width = 12, height = 6)
+```
+
+We see that PCA does not make a difference here. This is because we only have 3 features to start with anyways. Together, we select the best average accuracy within each family of method, and we select the methods with the highest single result. 
+```{r}
+LDAQDA_winner1 = (LDAQDA_df %>% arrange(-Average))$Method[1]
+LDAQDA_winner2 = (LDAQDA_df %>% gather(key = "Fold", value ="Accuracy", -c(Method, Average)) %>% arrange(-Accuracy))$Method[1]
+glm_winner1 = (glm_df %>% arrange(-Average))$Method[1]
+glm_winner2 = (glm_df %>% gather(key = "Fold", value ="Accuracy", -c(Method, Average)) %>% arrange(-Accuracy))$Method[1]
+```
+
+We see that QDA is uniformly better than LDA. Therefore, our candidates for this round are GLM-A, GLM-B, QDA-A, QDA-B. Now we do our testing by using the test dataset.
+```{r}
+QDA_fit_A = train(factor(ExpertLabel) ~., data = train_set_bind_A %>% select(-c(X, Y)), method = "qda")
+QDA_prediction_A = predict(QDA_fit_A, test_set_A, type = "raw")
+QDA_CV_A$test = 1 - classification_error(QDA_prediction_A, data_test_A$ExpertLabel)
+
+QDA_fit_B = train(factor(ExpertLabel) ~., data = train_set_bind_B %>% select(-c(X, Y)), method = "qda")
+QDA_prediction_B = predict(QDA_fit_B, test_set_B, type = "raw")
+QDA_CV_B$test = 1 - classification_error(QDA_prediction_B, data_test_B$ExpertLabel)
+
+glm_fit_A = train(factor(ExpertLabel) ~., data = train_set_bind_A %>% select(-c(X, Y)), method = "glm", family = "binomial")
+glm_prediction_A = predict(glm_fit_A, test_set_A, type = "raw")
+glm_CV_A$test = 1 - classification_error(glm_prediction_A, data_test_A$ExpertLabel)
+
+glm_fit_B = train(factor(ExpertLabel) ~., data = train_set_bind_B %>% select(-c(X, Y)),  method = "glm", family = "binomial")
+glm_prediction_B = predict(glm_fit_B, test_set_B, type = "raw")
+glm_CV_B$test = 1 - classification_error(glm_prediction_B, data_test_B$ExpertLabel)
+```
+
+```{r}
+candidates = list(QDA_CV_A,QDA_CV_B,glm_CV_A,glm_CV_B)
+accuracies_candidate = matrix(0, nrow = length(candidates), ncol = 3)
+method = numeric(length(candidates))
+split = rep(x = c("A", "B"), length(candidates)/2)
+average_accuracies = numeric(length(candidates))
+test_accuracies = numeric(length(candidates))
+for (i in 1:length(candidates)){
+  accuracies_candidate[i,] = candidates[[i]]$Accuracies
+  average_accuracies[i] = candidates[[i]]$AverageAccuracy
+  method[i] = paste(candidates[[i]]$method, "-", split[i], sep = "")
+  test_accuracies[i] = candidates[[i]]$test
+}
+candidates_df = cbind(method, test_accuracies,average_accuracies, data.frame(accuracies_candidate))
+colnames(candidates_df) = c("Method", "TestAccuracy", "AverageAccuracy","Fold1","Fold2","Fold3")
+candidates_df
+```
+We can see that QDA is the winner here, and it looks like the second splitting method is better. The reason is that we get more data when we do the testing, and the second method benefits a lot more from that. We will explain this matter further later.
+Conclusion so far: Use non-PCA for computational speed and use splitting method B.
+
+Now we are ready to run SVM method and random forest models.
+```{r}
+rf_CV_B = CVgeneric("rf", PCA = F, train_set = train_set_B, labels = train_set_bind_B$ExpertLabel, 
+                    K = 3, split_method = "B")
+rf_fit_B = randomForest(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)))
+rf_prediction_B = predict(rf_fit_B, test_set_B, type = "response")
+rf_CV_B$test = 1 - classification_error(rf_prediction_B, data_test_B$ExpertLabel)
+
+SVM_CV_B = CVgeneric("svm", PCA = F, K = 3, 
+                     train_set = train_set_B, 
+                     labels = train_set_bind_B$ExpertLabel, split_method = "B")
+SVM_fit_B = svm(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)))
+SVM_prediction_B = predict(SVM_fit_B, test_set_B, type = "raw")
+SVM_CV_B$test = 1 - classification_error(SVM_prediction_B, data_test_B$ExpertLabel)
+```
+
+```{r}
+candidates_full = list(SVM_CV_B, rf_CV_B, QDA_CV_A,QDA_CV_B,glm_CV_A,glm_CV_B)
+accuracies_candidate = matrix(0, nrow = length(candidates_full), ncol = 3)
+method = numeric(length(candidates_full))
+split = c("B", "B", "A","B","A","B")
+average_accuracies = numeric(length(candidates_full))
+test_accuracies = numeric(length(candidates_full))
+for (i in 1:length(candidates_full)){
+  accuracies_candidate[i,] = candidates_full[[i]]$Accuracies
+  average_accuracies[i] = candidates_full[[i]]$AverageAccuracy
+  method[i] = paste(candidates_full[[i]]$method, "-", split[i], sep = "")
+  test_accuracies[i] = candidates_full[[i]]$test
+}
+candidates_full_df = cbind(method, test_accuracies,average_accuracies, data.frame(accuracies_candidate))
+colnames(candidates_full_df) = c("Method", "TestAccuracy","AverageAccuracy", "Fold1","Fold2","Fold3")
+candidates_full_df
+```
+
+SVM and RandomForest are obviously the winners here in terms of Test Accuracy and Average Accuracy across folds.
+Now we look at the ROC curves for these families of models.
+
+##(b): ROC
+
+```{r}
+rocplot =function (pred , truth , plot = F, ...){
+ predob = prediction(pred , truth)
+ perf = performance(predob , "tpr", "fpr")
+ if(plot){
+   plot(perf,...)
+ }
+ return(perf)}
+
+rf_prediction_B_score = predict(rf_fit_B, test_set_B, type = "vote")
+rf_ROC = rocplot(rf_prediction_B_score[,2], truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+
+
+SVM_prediction_B_score = predict(SVM_fit_B, test_set_B, decision.values = T)
+SVM_ROC = rocplot(attributes(SVM_prediction_B_score)$decision.values,
+        truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+
+SVM_linear_fit_B = svm(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), kernel = "linear")
+SVM_sigmoid_fit_B = svm(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), kernel = "sigmoid")
+SVM_polynomial_fit_B = svm(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), kernel = "polynomial")
+
+
+SVM_linear_prediction_B_score = predict(SVM_linear_fit_B, test_set_B, decision.values = T)
+SVM_linear_ROC = rocplot(attributes(SVM_linear_prediction_B_score)$decision.values,
+        truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+SVM_sigmoid_prediction_B_score = predict(SVM_sigmoid_fit_B, test_set_B, decision.values = T)
+SVM_sigmoid_ROC = rocplot(attributes(SVM_sigmoid_prediction_B_score)$decision.values,
+        truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+SVM_polynomial_prediction_B_score = predict(SVM_polynomial_fit_B, test_set_B, decision.values = T)
+SVM_polynomial_ROC = rocplot(attributes(SVM_polynomial_prediction_B_score)$decision.values,
+        truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+
+
+glm_prediction_B_score = predict(glm_fit_B, test_set_B, type = "prob")
+glm_ROC = rocplot(glm_prediction_B_score[,2], test_set_B$ExpertLabel%>% as.character() %>% as.numeric)
+
+
+QDA_fit_B_ROC = qda(factor(ExpertLabel) ~., data = train_set_bind_B %>% select(-c(X, Y)))
+QDA_prediction_B_score = predict(QDA_fit_B_ROC, test_set_B)
+QDA_ROC = rocplot(QDA_prediction_B_score$posterior[,2], test_set_B$ExpertLabel%>% as.character() %>% as.numeric)
+
+LDA_fit_B_ROC = lda(factor(ExpertLabel) ~., data = train_set_bind_B %>% select(-c(X, Y)))
+LDA_prediction_B_score = predict(LDA_fit_B_ROC, test_set_B)
+LDA_ROC = rocplot(LDA_prediction_B_score$posterior[,2], test_set_B$ExpertLabel%>% as.character() %>% as.numeric)
+
+ROCs = list(SVM_ROC, SVM_linear_ROC, SVM_sigmoid_ROC, SVM_polynomial_ROC, rf_ROC, glm_ROC, QDA_ROC, LDA_ROC)
+```
+
+```{r}
+ROC_method = c("SVM_Radial", "SVM_Linear","SVM_Sigmoid","SVM_Polynomial", "randomForest", "Logistic","QDA", "LDA")
+ROC_col = c()
+ROC_df = matrix(0, nrow = nrow(test_set_B) + 1, ncol = length(ROCs)*2)
+for (i in 1:length(ROCs)){
+  ROC_col = c(ROC_col, paste(ROC_method[i],".x", sep = ""))
+  ROC_df[1:length(ROCs[[i]]@x.values[[1]]), 2*i - 1] = ROCs[[i]]@x.values[[1]]
+  ROC_col = c(ROC_col, paste(ROC_method[i],".y", sep = ""))
+  ROC_df[1:length(ROCs[[i]]@y.values[[1]]), 2*i] = ROCs[[i]]@y.values[[1]]
+}
+ROC_df = data.frame(ROC_df)
+colnames(ROC_df) = ROC_col
+```
+
+```{r}
+ggplot(ROC_df) +
+  geom_point(aes(x = SVM_Radial.x, y = SVM_Radial.y, color = "SVM-Radial"), size = 0.5) +
+  geom_point(aes(x = SVM_Linear.x, y = SVM_Linear.y, color = "SVM-Linear"), size = 0.5) +
+  geom_point(aes(x = SVM_Sigmoid.x, y = SVM_Sigmoid.y, color = "SVM-Sigmoid"), size = 0.5) +
+  geom_point(aes(x = SVM_Polynomial.x, y = SVM_Polynomial.y, color = "SVM-Polynomial"), size = 0.5) +
+  geom_point(aes(x = randomForest.x, y = randomForest.y, color = "randomForest"), size = 0.5) +
+  geom_point(aes(x = Logistic.x, y = Logistic.y, color = "Logistic"), size = 0.5) +
+  geom_point(aes(x = QDA.x, y = QDA.y, color = "QDA"), size = 0.5) +
+  geom_point(aes(x = LDA.x, y = LDA.y, color = "LDA"), size = 0.5) +
+  scale_color_manual("Model", breaks = c("SVM-Radial", "SVM-Linear","SVM-Sigmoid","SVM-Polynomial", "randomForest", "Logistic","QDA","LDA"), values=c("cyan2", "black", "purple", "red","grey20", "orange","tan4", "darkgreen")) + #legend for Ions
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),  #Some random tweeks of the ggplot theme. Need someone more artistic to do this part :)
+        panel.grid.major.y = element_line(colour = "grey80"),
+        panel.grid.minor.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.major.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+        axis.title = element_text(size = 15, face = "bold"),
+        legend.title = element_text(size = 12, face = "bold")
+        ) +
+    guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "False Positive Rate", y = "True Positive Rate", title = "ROC", subtitle = "Data Split: B") #axis labels and plot title
+#ggsave("ROC_all.png", width = 10, height = 7)
+
+```
+
+It looks like our radial SVM and randomForest perform the best. Now let's try some other `C` (cost/cutoff) and `gamma` for SVM, and `mtry` for randomForest.
+```{r}
+#randomForests
+rf_fit_mtry1_B = randomForest(factor(ExpertLabel)~., data = train_set_bind_B  %>% select(-c(X, Y)), mtry = 1)
+rf_fit_mtry2_B = randomForest(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), mtry = 2)
+rf_fit_mtry3_B = randomForest(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), mtry = 3)
+
+rf_mtry1_prediction_B_score = predict(rf_fit_mtry1_B, test_set_B, type = "prob")
+rf_mtry2_prediction_B_score = predict(rf_fit_mtry2_B, test_set_B, type = "prob")
+rf_mtry3_prediction_B_score = predict(rf_fit_mtry3_B, test_set_B, type = "prob")
+
+rf_mtry1_ROC = rocplot(rf_mtry1_prediction_B_score[,2], truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+rf_mtry2_ROC = rocplot(rf_mtry2_prediction_B_score[,2], truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+rf_mtry3_ROC = rocplot(rf_mtry3_prediction_B_score[,2], truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+
+rf_mtry1_ROC_auc = performance(prediction(rf_mtry1_prediction_B_score[,2], test_set_B$ExpertLabel %>% as.character() %>% as.numeric) ,"auc")
+rf_mtry2_ROC_auc = performance(prediction(rf_mtry2_prediction_B_score[,2], test_set_B$ExpertLabel %>% as.character() %>% as.numeric) ,"auc")
+rf_mtry3_ROC_auc = performance(prediction(rf_mtry3_prediction_B_score[,2], test_set_B$ExpertLabel %>% as.character() %>% as.numeric) ,"auc")
+
+```
+
+
+```{r}
+#SVMs
+SVM_fit_cost10_B = svm(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), cost = 10)
+SVM_fit_gamma2_B = svm(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), gamma = 2)
+SVM_fit_cost10gamma2_B = svm(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), gamma = 2, cost = 10)
+
+SVM_c1g02_prediction_B_score = predict(SVM_fit_B, test_set_B, decision.values = T)
+SVM_c10g02_prediction_B_score = predict(SVM_fit_cost10_B, test_set_B, decision.values = T)
+SVM_c1g2_prediction_B_score = predict(SVM_fit_gamma2_B, test_set_B, decision.values = T)
+SVM_c10g2_prediction_B_score = predict(SVM_fit_cost10gamma2_B, test_set_B, decision.values = T)
+
+
+SVM_c1g02_ROC = rocplot(attributes(SVM_c1g02_prediction_B_score)$decision.values,
+        truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+SVM_c10g02_ROC = rocplot(attributes(SVM_c10g02_prediction_B_score)$decision.values,
+        truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+SVM_c1g2_ROC = rocplot(attributes(SVM_c1g2_prediction_B_score)$decision.values,
+        truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+SVM_c10g2_ROC = rocplot(attributes(SVM_c10g2_prediction_B_score)$decision.values,
+        truth = test_set_B$ExpertLabel %>% as.character() %>% as.numeric)
+
+SVM_c1g02_ROC_auc = performance(prediction(attributes(SVM_c1g02_prediction_B_score)$decision.values, test_set_B$ExpertLabel %>% as.character() %>% as.numeric) ,"auc")
+SVM_c10g02_ROC_auc = performance(prediction(attributes(SVM_c10g02_prediction_B_score)$decision.values, test_set_B$ExpertLabel %>% as.character() %>% as.numeric) ,"auc")
+SVM_c1g2_ROC_auc = performance(prediction(attributes(SVM_c1g2_prediction_B_score)$decision.values, test_set_B$ExpertLabel %>% as.character() %>% as.numeric) ,"auc")
+SVM_c10g2_ROC_auc = performance(prediction(attributes(SVM_c1g2_prediction_B_score)$decision.values, test_set_B$ExpertLabel %>% as.character() %>% as.numeric) ,"auc")
+
+ROCs_SVMrf = list(SVM_c1g02_ROC, SVM_c10g02_ROC, SVM_c1g2_ROC, SVM_c10g2_ROC, rf_mtry1_ROC, rf_mtry2_ROC, rf_mtry3_ROC)
+AUCs_SVMrf = c(SVM_c1g02_ROC_auc@y.values[[1]], 
+               SVM_c10g02_ROC_auc@y.values[[1]], 
+               SVM_c1g2_ROC_auc@y.values[[1]], 
+               SVM_c10g2_ROC_auc@y.values[[1]], 
+               rf_mtry1_ROC_auc@y.values[[1]], rf_mtry2_ROC_auc@y.values[[1]], rf_mtry3_ROC_auc@y.values[[1]])
+```
+
+```{r}
+ROC_SVMrf_method = c("C1G02", "C10G02","C1G2","C10G2", "mtry1", "mtry2", "mtry3")
+ROC_SVMrf_col = c()
+ROC_SVMrf_df = matrix(0, nrow = nrow(test_set_B) + 1, ncol = length(ROCs_SVMrf)*2)
+for (i in 1:length(ROCs_SVM)){
+  ROC_SVMrf_col = c(ROC_SVMrf_col, paste(ROC_SVMrf_method[i],".x", sep = ""))
+  ROC_SVMrf_df[1:length(ROCs_SVMrf[[i]]@x.values[[1]]), 2*i - 1] = ROCs_SVMrf[[i]]@x.values[[1]]
+  ROC_SVMrf_col = c(ROC_SVMrf_col, paste(ROC_SVMrf_method[i],".y", sep = ""))
+  ROC_SVMrf_df[1:length(ROCs_SVMrf[[i]]@y.values[[1]]), 2*i] = ROCs_SVMrf[[i]]@y.values[[1]]
+}
+ROC_SVMrf_df = data.frame(ROC_SVMrf_df)
+colnames(ROC_SVMrf_df) = ROC_SVMrf_col
+```
+
+```{r}
+ggplot(ROC_SVMrf_df) +
+  geom_point(aes(x = C1G02.x, y = C1G02.y, color = paste("SVM:C=1,Gamma=0.2\nAUC = ", round(AUCs_SVM[1],4), sep = "")), size = 0.3) +
+  geom_point(aes(x = C10G02.x, y = C10G02.y, color = paste("SVM:C=10,Gamma=0.2\nAUC = ", round(AUCs_SVM[2],4), sep = "")), size = 0.3) +
+  geom_point(aes(x = C1G2.x, y = C1G2.y, color = paste("SVM:C=1,Gamma=2\nAUC = ", round(AUCs_SVM[3],4), sep = "")), size = 0.3) +
+  geom_point(aes(x = C10G2.x, y = C10G2.y, color = paste("SVM:C=10,Gamma=2\nAUC = ", round(AUCs_SVM[4],4), sep = "")), size = 0.3) +
+  scale_color_manual("Parameter", breaks = c(paste("SVM:C=1,Gamma=0.2\nAUC = ", round(AUCs_SVM[1],4), sep = ""), 
+                                             paste("SVM:C=10,Gamma=0.2\nAUC = ", round(AUCs_SVM[2],4), sep = ""),
+                                             paste("SVM:C=1,Gamma=2\nAUC = ", round(AUCs_SVM[3], 4), sep = ""),
+                                             paste("SVM:C=10,Gamma=2\nAUC = ", round(AUCs_SVM[4], 4), sep = "")), values=c("cyan2", "black", "purple", "red")) + #legend for Ions
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),  #Some random tweeks of the ggplot theme. Need someone more artistic to do this part :)
+        panel.grid.major.y = element_line(colour = "grey80"),
+        panel.grid.minor.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.major.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+        axis.title = element_text(size = 15, face = "bold"),
+        legend.title = element_text(size = 12, face = "bold")
+        ) +
+    guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "False Positive Rate", y = "True Positive Rate", title = "ROC for SVM with Different Parameters", subtitle = "Data Split: B") #axis labels and plot 
+
+ggsave("ROC_SVM.png", width = 10, height = 7)
+
+
+ggplot(ROC_SVMrf_df) +
+  geom_line(aes(x = mtry1.x, y = mtry1.y, color = paste("randomForest:mtry=1\nAUC = ", round(AUCs_SVM[5],4), sep = "")), size = 0.7) +
+  geom_line(aes(x = mtry2.x, y = mtry2.y, color = paste("randomForest:mtry=2\nAUC = ", round(AUCs_SVM[6],4), sep = "")), size = 0.7) +
+  geom_line(aes(x = mtry3.x, y = mtry3.y, color = paste("randomForest:mtry=3\nAUC = ", round(AUCs_SVM[7],4), sep = "")), size = 0.7) +
+  scale_color_manual("Parameter", breaks = c(paste("randomForest:mtry=1\nAUC = ", round(AUCs_SVM[5],4), sep = ""),
+                                             paste("randomForest:mtry=2\nAUC = ", round(AUCs_SVM[6],4), sep = ""),
+                                             paste("randomForest:mtry=3\nAUC = ", round(AUCs_SVM[7],4), sep = "")), 
+                     values=c("orange","tan4", "darkgreen")) + #legend for Ions
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),  #Some random tweeks of the ggplot theme. Need someone more artistic to do this part :)
+        panel.grid.major.y = element_line(colour = "grey80"),
+        panel.grid.minor.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.major.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+        axis.title = element_text(size = 15, face = "bold"),
+        legend.title = element_text(size = 12, face = "bold")
+        ) +
+    guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "False Positive Rate", y = "True Positive Rate", title = "ROC for RF with Different Parameters", subtitle = "Data Split: B") #axis labels and plot 
+
+ggsave("ROC_RF.png", width = 10, height = 7)
+
+```
+
+Final Decision: randomForest, mtry = 3.
+Now, we choose the best cutoff for this model. Since we don't have a preference on classifying cloud or surface, we simply want a cutoff such that the (fpr, cpr) coordinate is closest to (0, 1), which is the best result a cutoff can reach. 
+
+```{r}
+distance = sqrt(rf_mtry3_ROC@x.values[[1]]**2 + (1 - rf_mtry3_ROC@y.values[[1]])**2)#The distance between a point on the ROC to (0, 1)
+distance_df = data.frame(cutoff = (rf_mtry3_ROC@alpha.values[[1]])[c(-1, -502)], distance = distance[c(-1, -502)])
+ggplot(distance_df, aes(x = cutoff, y = distance)) + geom_point(size = 0.5) + geom_point(aes(x = cutoff[which.min(distance)], y = min(distance)), color = "red") +  theme(panel.background = element_rect(fill = "white", colour = "grey50"),  #Some random tweeks of the ggplot theme. Need someone more artistic to do this part :)
+        panel.grid.major.y = element_line(colour = "grey80"),
+        panel.grid.minor.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.major.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+        axis.title = element_text(size = 15, face = "bold"),
+        legend.title = element_text(size = 12, face = "bold")
+        ) + 
+  labs(x = "Cutoff Value", y = "Distance to (0, 1)", title = "Choosing Best Cutoff", subtitle = "randomForest, mtry = 3")
+#ggsave("BestCutoff_3b.png", width = 6, height = 4)
+
+```
+
+```{r}
+index = which.min(distance)
+cutoff = rf_mtry3_ROC@alpha.values[[1]][index]
+fpr = rf_mtry3_ROC@x.values[[1]][index]
+cpr = rf_mtry3_ROC@y.values[[1]][index]
+
+ggplot(ROC_SVMrf_df) +
+  geom_line(aes(x = mtry3.x, y = mtry3.y), size = 1) +
+  geom_point(aes(x = fpr, y = cpr), size = 3, color = "red") +
+  geom_segment(aes(x = fpr, y = cpr, xend = 0, yend = 1), colour = "red") +
+  geom_point(aes(x = 0, y = 1), size = 1.5, color = "black") +
+
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),  #Some random tweeks of the ggplot theme. Need someone more artistic to do this part :)
+        panel.grid.major.y = element_line(colour = "grey80"),
+        panel.grid.minor.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.major.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+        axis.title = element_text(size = 15, face = "bold"),
+        plot.subtitle = element_text(size = 12, color = "red")
+        ) +
+    guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "False Positive Rate", y = "True Positive Rate", title = "ROC for RandomForest", subtitle = paste("Cutoff = ", cutoff, ", mtry = 3\nAUC = ", round(AUCs_SVM[7],4), sep = "")) + coord_fixed()
+
+#ggsave("ROC_withcutoff_3b.png", width = 7, height = 8)
+```
+
+##(c): Bonus: Image-wise Prediction
+In a real life situation, we will be getting more and more images. Our ways of splitting the data, though we have kept locality in mind, still breaks down that structure quite severely. Therefore, we will use first two images as train set, and the third image as test set for our top candidates.
+
+```{r}
+imagefit_SVM = svm(factor(ExpertLabel)~., data = rbind(data1,data2) %>% select(c(X, Y, ExpertLabel, CORR, NDAI, AN)), cost = 10)
+imagefit_rf = randomForest(factor(ExpertLabel)~., rbind(data1,data2) %>% select(c(X, Y, ExpertLabel, CORR, NDAI, AN)), mtry =3)
+
+imagepredict_SVM = predict(imagefit_SVM, data3)
+imagepredict_rf = predict(imagefit_rf, data3)
+classification_error(imagepredict_SVM, data3$ExpertLabel)
+classification_error(imagepredict_rf, data3$ExpertLabel)
+
+```
+
+Since we have the predicted probabilities at hand, we will look at the log loss of our top choices:
+```{r}
+SVM_best = svm(factor(ExpertLabel)~., data = train_set_bind_B, cost = 10, probability = T)
+SVM_best_prediction = predict(SVM_best, test_set_B, probability = T)
+```
+

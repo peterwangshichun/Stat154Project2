@@ -1,0 +1,710 @@
+---
+title: "Diagnostics"
+author: "Shichun Wang"
+date: "April 28th, 2019"
+output: html_document
+---
+
+```{r, include=FALSE}
+source("Modeling.R")
+```
+
+##(a): In-depth analysis
+Again, our final candidate is the full RandomForest model. We will do a in-depth analysis of this model.
+
+###Convergence
+We want to see how fast this mondel converges as more data come in. To model this, we add in more and more data in the test+validation set and see how fast the accuracy decreases. We do this by using the data_split functions multiple times, each time getting two sizes. 
+```{r}
+n = c()
+accuracies_n = c()
+fit_time = c()
+prediction_time = c()
+for (k in 2:5){#omit k = 1 since we won't get two df with k = 1. 
+
+  con_df = data_split_B(train_set_bind_B, split_k = k)
+  train_1 = filter(con_df, labels == 1) %>% select(-c(X, Y, labels))
+  n = c(n, nrow(train_1))
+  start_time <- Sys.time()
+  rf_fit_1 = randomForest(factor(ExpertLabel)~., data = train_1, mtry = 3)
+  end_time <- Sys.time()
+  fit_time = c(fit_time, as.numeric(end_time - start_time))
+  start_time <- Sys.time()
+  accuracies_n = c(accuracies_n, 1 - classification_error(predict(rf_fit_1, test_set_B), test_set_B$ExpertLabel))
+  end_time <- Sys.time()
+  prediction_time = c(prediction_time, as.numeric(end_time - start_time))
+
+  train_2 = filter(con_df, labels != 1) %>% select(-c(X, Y, labels))
+  n = c(n, nrow(train_2))
+  start_time <- Sys.time()
+  rf_fit_2 = randomForest(factor(ExpertLabel)~., data = train_2, mtry = 3)
+  end_time <- Sys.time()
+  fit_time = c(fit_time, as.numeric(end_time - start_time))
+  start_time <- Sys.time()
+  accuracies_n = c(accuracies_n, 1 - classification_error(predict(rf_fit_2, test_set_B), test_set_B$ExpertLabel))
+  end_time <- Sys.time()
+  prediction_time = c(prediction_time, as.numeric(end_time - start_time))
+
+}
+##################Adding the full size data
+n = c(n, nrow(train_set_B))
+start_time = Sys.time()
+rf_fit = randomForest(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), mtry = 3)
+end_time <- Sys.time()
+fit_time = c(fit_time, as.numeric(end_time - start_time))
+start_time <- Sys.time()
+accuracies_n = c(accuracies_n, 1 - classification_error(predict(rf_fit, test_set_B), test_set_B$ExpertLabel))
+end_time <- Sys.time()
+prediction_time = c(prediction_time, as.numeric(end_time - start_time))
+
+```
+
+```{r}
+convergence_df = data.frame(n, TestAccuracy = accuracies_n, FitTime = fit_time, PredictionTime = prediction_time)
+p_fittime = ggplot(convergence_df, aes(x = n, y = FitTime)) + 
+  geom_line(color = "blue", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(20000, 140000, 20000)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Train Sample Size", y = "Time Cost (Seconds)", title = "Fitting Time Complexity")
+
+p_predictiontime = ggplot(convergence_df, aes(x = n, y = PredictionTime)) + 
+  geom_line(color = "blue", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(20000, 140000, 20000)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Train Sample Size", y = "Time Cost (Seconds)", title = "Prediction Time Complexity")
+
+ggplot(convergence_df, aes(x = n, y = TestAccuracy)) + 
+  geom_line(color = "blue", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(20000, 140000, 20000)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Train Sample Size", y = "Accuracy", title = "Test Accuracy")
+#ggsave("TestAccuracy_Convergence_4a.png", width = 5, height = 4)
+p_Time = grid.arrange(p_fittime, p_predictiontime)
+#ggsave("TimeComplexity_Convergence_4a.png",p_Time, width = 8, height = 6)
+```
+
+###Hyperparameter Tuning: nTree
+We have already looked at mtry and found that it does not make too big of a difference since the dimension of feature space is quite low. Therefore, we will be looking at how nTree will affect fitting. For faster runtime, since we have seen that half of the current sample size is still stable, we will look do that to speed up the computation.
+```{r}
+ntrees = seq(100,1000, by = 50)
+accuracies_ntree = c()
+prediction_time_ntree = c()
+fit_time_ntree = c()
+
+for(ntree in ntrees){
+  cat(paste("Working on ntree = ",ntree, sep = ""))
+  start_time <- Sys.time()
+  rf_fit_1 = randomForest(factor(ExpertLabel)~., data = train_set_bind_B %>% select(-c(X, Y)), mtry = 3, ntree = ntree)
+  end_time <- Sys.time()
+  fit_time_ntree = c(fit_time_ntree, as.numeric(end_time - start_time))
+  start_time <- Sys.time()
+  accuracies_ntree = c(accuracies_ntree, 1 - classification_error(predict(rf_fit_1, test_set_B), test_set_B$ExpertLabel))
+  end_time <- Sys.time()
+  prediction_time_ntree = c(prediction_time_ntree, as.numeric(end_time - start_time))
+}
+
+```
+
+```{r}
+for (i in 1:length(fit_time_ntree)){#Fixing a bug: the unit of time changed to minutes for some large ntrees
+  if (fit_time_ntree[i] < 3){
+    fit_time_ntree[i] = fit_time_ntree[i] * 60
+  }
+}
+
+
+ntree_df = data.frame(ntrees, TestAccuracy = accuracies_ntree, FitTime = fit_time_ntree, PredictionTime = prediction_time_ntree)
+p_fittime_ntree = ggplot(ntree_df, aes(x = ntrees, y = FitTime)) + 
+  geom_line(color = "blue", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(100, 1000, 50)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Number of Trees", y = "Time Cost (Seconds)", title = "Fitting Time Complexity")
+
+p_predictiontime_ntree = ggplot(ntree_df, aes(x = ntrees, y = PredictionTime)) + 
+  geom_line(color = "blue", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(100, 1000, 50)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Number of Trees", y = "Time Cost (Seconds)", title = "Prediction Time Complexity")
+p_Time_ntree = grid.arrange(p_fittime_ntree, p_predictiontime_ntree)
+#ggsave("TimeComplexity_ntree_4a.png",p_Time_ntree, width = 8, height = 6)
+
+ggplot(ntree_df, aes(x = ntrees, y = TestAccuracy)) + 
+  geom_line(color = "blue", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(100, 1000, 50)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Number of Trees", y = "Accuracy", title = "Test Accuracy")
+#ggsave("TestAccuracy_ntree_4a.png", width = 5, height = 4)
+```
+
+##(b): Misclassifications
+
+```{r}
+fit_rf_final = randomForest(factor(ExpertLabel)~., train_set_bind_B %>% select(-c(X, Y)), mtry = 3, ntree = 400)
+rf_predictions_final = predict(fit_rf_final, test_set_B, type = "response", cutoff = c(1- cutoff, cutoff))
+classification_error(rf_predictions_final, test_set_B$ExpertLabel)
+```
+
+
+We want to see if the misclassifications appear in a specific region by graphing where they are.
+```{r}
+p_full_map = ggplot(rbind(train_set_bind_B, test_set_B), aes(x = X, y = -Y)) +
+  geom_point(aes(col = as.character(ExpertLabel)), size = 0.00001) +
+  scale_color_manual(label = c("Clear", "Cloud"),values = c("black","white")) +
+                       theme_dark()+
+  theme( plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+         plot.background = element_rect(fill="gray90"),
+         axis.title = element_text(size = 8, face = "bold"),
+          legend.title = element_text(size = 8, face = "bold"),
+         legend.text = element_text(size = 5, face = "bold"),
+         legend.background = element_rect(fill="gray90", size=.5, linetype="dotted"),
+                  legend.position = "bottom"
+    ) +
+  guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "X", y = "Y", color = "Expert Label", title = "Full Map")
+
+p_test_map = ggplot(test_set_B, aes(x = X, y = -Y)) +
+  geom_point(aes(col = as.character(ExpertLabel)), size = 0.0001) +
+  scale_color_manual(label = c("Clear", "Cloud"),values = c("black","white")) +
+                       theme_dark()+
+  theme( plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+         plot.background = element_rect(fill="gray90"),
+         axis.title = element_text(size = 8, face = "bold"),
+          legend.title = element_text(size = 8, face = "bold"),
+         legend.text = element_text(size = 5, face = "bold"),
+         legend.background = element_rect(fill="gray90", size=.5, linetype="dotted"),
+         legend.position = "bottom"
+    ) +
+  guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "X", y = "Y", color = "Expert Label", title = "Test Map")
+p_test_map_mis = p_test_map +   
+  geom_point(data = test_set_B %>% filter(as.character(ExpertLabel)!=as.character(rf_predictions_final)), 
+             aes(x = X, y = -Y), color = "red", size = 0.00001) + labs(title = "Misclassifications")
+
+p_4bmaps = grid.arrange(p_full_map, p_test_map, p_test_map_mis, nrow = 1)
+#ggsave("4bmaps.png", p_4bmaps, width = 10, height = 5)
+```
+
+We see an obvious cluster of misclassifications in the top area. Let us futher observe the feature values of misclassified points in comparison to the rest of the data.
+```{r}
+mis_index = which(as.character(test_set_B$ExpertLabel)!=as.character(rf_predictions_final))
+test_set_B_hit = test_set_B[-mis_index,] 
+test_set_B_mis =  test_set_B[mis_index,]
+
+
+p_CORR = ggplot(test_set_B %>% 
+                  cbind(Classification = (as.character(test_set_B$ExpertLabel)==as.character(rf_predictions_final))) %>%
+                  mutate(ExpertLabel = factor(ExpertLabel, labels = c("NoCloud", "Cloud")))) + 
+  
+  geom_histogram(aes(x = CORR, y =..density.., fill = ExpertLabel), binwidth = 0.06, col = "black", position = position_dodge()) + 
+  geom_density(aes(x = CORR, y = ..density.., col = Classification), size = 1)+
+  scale_color_manual(values = c("red", "dodgerblue2")) +
+  scale_fill_manual(values = c("gray30", "white")) +
+  theme(
+        panel.grid.major.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 17, face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "bottom",
+        legend.box = "vertical"
+        ) +
+  labs(y = "Density", title = "", subtitle = "")
+
+p_NDAI = ggplot(test_set_B %>% 
+                  cbind(Classification = (as.character(test_set_B$ExpertLabel)==as.character(rf_predictions_final))) %>%
+                  mutate(ExpertLabel = factor(ExpertLabel, labels = c("NoCloud", "Cloud")))) + 
+  
+  geom_histogram(aes(x = NDAI, y =..density.., fill = ExpertLabel), binwidth = 0.3, col = "black", position = position_dodge()) + 
+  geom_density(aes(x = NDAI, y = ..density.., col = Classification), size = 1)+
+  scale_color_manual(values = c("red", "dodgerblue2")) +
+  scale_fill_manual(values = c("gray30", "white")) +
+  theme(
+        panel.grid.major.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 17, face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "bottom",
+        legend.box = "vertical"
+        ) +
+  labs(y = "Density", title = "Feature Value Distribution ", subtitle = "Data Split: B")
+p_NDAI
+
+p_AN = ggplot(test_set_B %>% 
+                  cbind(Classification = (as.character(test_set_B$ExpertLabel)==as.character(rf_predictions_final))) %>%
+                  mutate(ExpertLabel = factor(ExpertLabel, labels = c("NoCloud", "Cloud")))) + 
+  
+  geom_histogram(aes(x = AN, y =..density.., fill = ExpertLabel), binwidth = 15, col = "black", position = position_dodge()) + 
+  geom_density(aes(x = AN, y = ..density.., col = Classification), size = 1)+
+  scale_color_manual(values = c("red", "dodgerblue2")) +
+  scale_fill_manual(values = c("gray30", "white")) +
+  theme(
+        panel.grid.major.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 17, face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "bottom",
+        legend.box = "vertical"
+        ) +
+  labs(y = "Density", title = "", subtitle = "") 
+
+
+p_features_mis = grid.arrange(p_CORR, p_NDAI, p_AN, nrow = 1)
+#ggsave("FeatureValues_4b.png", p_features_mis,width = 10, height = 5)
+```
+
+
+
+##4(c): Potential Improvements
+As mentioned in part b, we realize that the majority of the misclassified points is mainly due to NDAI (specifically NDAI in range [0, 4]). We don't have much domain knowledge, but it looks like these No Cloud areas are quite close to Cloud areas. A differentiator for No Cloud is actually small CORR value as one can see in the box plots above. Therefore, we tried to find differentiators for the high NDAI No Cloud areas. Turns out that SD and AF are relatively better at differentiating those points. 
+
+```{r}
+p_expCORR = ggplot(data_test_B %>% 
+                  cbind(Classification = (as.character(test_set_B$ExpertLabel)==as.character(rf_predictions_final))) %>%
+                  mutate(ExpertLabel = factor(ExpertLabel, labels = c("NoCloud", "Cloud"))) %>% filter(NDAI > 0))+ 
+  
+  geom_histogram(aes(x = exp(CORR), y =..density.., fill = ExpertLabel), binwidth =0.05, col = "black", position = position_dodge()) + 
+  #geom_density(aes(x = exp(CORR), y = ..density.., col = Classification), size = 1)+
+  scale_color_manual(values = c("red", "dodgerblue2")) +
+  scale_fill_manual(values = c("gray30", "white")) +
+  theme(panel.grid.major.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 17, face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "bottom",
+        legend.box = "vertical"
+        ) +
+  labs(y = "Density", title = "", subtitle = "")
+
+p_standardCORR = ggplot(data_test_B %>% 
+                  cbind(Classification = (as.character(test_set_B$ExpertLabel)==as.character(rf_predictions_final))) %>%
+                  mutate(ExpertLabel = factor(ExpertLabel, labels = c("NoCloud", "Cloud"))) %>% filter(NDAI > 0))+ 
+  
+  geom_histogram(aes(x = CORR, y =..density.., fill = ExpertLabel), binwidth =0.05, col = "black", position = position_dodge()) + 
+  #geom_density(aes(x = CORR, y = ..density.., col = Classification), size = 1)+
+  scale_color_manual(values = c("red", "dodgerblue2")) +
+  scale_fill_manual(values = c("gray30", "white")) +
+  theme(
+        panel.grid.major.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 17, face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "bottom",
+        legend.box = "vertical"
+        ) +
+  labs(y = "Density", title = "", subtitle = "")
+
+p_CORR_4c = grid.arrange(p_expCORR,p_standardCORR, nrow = 1)
+#ggsave("4cCORR.png", p_CORR_4c, width = 10, height = 7)
+```
+
+```{r}
+p_NDAI_mis = ggplot(data_test_B %>% 
+                  cbind(Classification = (as.character(data_test_B$ExpertLabel)==as.character(rf_predictions_final))) %>%
+                  mutate(ExpertLabel = factor(ExpertLabel, labels = c("NoCloud", "Cloud"))) %>% filter(NDAI>0.5)) + 
+  
+  geom_histogram(aes(x = NDAI, y =..density.., fill = ExpertLabel), binwidth = 0.3, col = "black", position = position_dodge()) + 
+  geom_density(aes(x = NDAI, y = ..density.., col = Classification), size = 0.5, linetype = "dashed")+
+  scale_color_manual(values = c("red", "dodgerblue2")) +
+  scale_fill_manual(values = c("gray30", "white")) +
+  theme(
+        panel.grid.major.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 17, face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "bottom",
+        legend.box = "vertical"
+        ) +
+  labs(y = "Density", title = "NDAI Distribution", subtitle = "NDAI [0, 4]")
+#ggsave("NDAI_zoomin_mis_4c.png", p_NDAI_mis, width = 6, height = 4)
+
+p_AF_mis = ggplot(data_test_B %>% 
+                  cbind(Classification = (as.character(data_test_B$ExpertLabel)==as.character(rf_predictions_final))) %>%
+                  mutate(ExpertLabel = factor(ExpertLabel, labels = c("NoCloud", "Cloud"))) %>% filter(NDAI > 0)) + 
+  
+  geom_histogram(aes(x = AF, y =..density.., fill = ExpertLabel), binwidth = 10, col = "black", position = position_dodge()) + 
+  geom_density(aes(x = AF, y = ..density.., col = Classification), size = 0.5, linetype = "dashed")+
+  scale_color_manual(values = c("red", "dodgerblue2")) +
+  scale_fill_manual(values = c("gray30", "white")) +
+  theme(
+        panel.grid.major.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 17, face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "bottom",
+        legend.box = "vertical"
+        ) +
+  labs(y = "Density", title = "AF Distribution", subtitle = "NDAI [0, 4]")
+
+p_SD_mis = ggplot(data_test_B %>% 
+                  cbind(Classification = (as.character(data_test_B$ExpertLabel)==as.character(rf_predictions_final))) %>%
+                  mutate(ExpertLabel = factor(ExpertLabel, labels = c("NoCloud", "Cloud"))) %>% filter(NDAI > 0)) + 
+  
+  geom_histogram(aes(x = SD, y =..density.., fill = ExpertLabel), binwidth = 3, col = "black", position = position_dodge()) + 
+  geom_density(aes(x = SD, y = ..density.., col = Classification), size = 0.5, linetype = "dashed")+
+  scale_color_manual(values = c("red", "dodgerblue2")) +
+  scale_fill_manual(values = c("gray30", "white")) +
+  theme(
+        panel.grid.major.y = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_line(linetype = "dashed", colour = "grey80"),
+        panel.grid.minor.x = element_blank(),
+        axis.ticks = element_line(),
+        plot.title = element_text(size = 17, face = "bold", hjust = 0.5), 
+        plot.subtitle = element_text(size = 10, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 10, face = "bold"),
+        legend.position = "bottom",
+        legend.box = "vertical"
+        ) +
+  labs(y = "Density", title = "SD Distribution", subtitle = "NDAI [0, 4]")
+
+p_newfeatures_mis = grid.arrange(p_AF_mis, p_SD_mis, nrow = 1)
+#ggsave("NewFeatureValues_mis_4c.png", p_newfeatures_mis,width = 10, height = 5)
+```
+
+
+Then we performed the same random forest fit and got a mild increase in accuracy
+
+```{r}
+
+
+train_set_int_bind_B = mutate(train_set_bind_B, CORR_NDAI = factor((CORR<0.3)*((NDAI>0)&(NDAI<4))))%>% 
+  mutate(SD = rbind(data_train_B, data_validation_B)$SD) %>% mutate(AF = rbind(data_train_B, data_validation_B)$AF)
+test_set_int_B = mutate(test_set_B,  CORR_NDAI =  factor((CORR<0.3)*((NDAI>0)&(NDAI<4)))) %>% 
+  mutate(SD = data_test_B$SD) %>% mutate(AF = data_test_B$AF)
+
+
+fit_rf_final_int = randomForest(factor(ExpertLabel)~. , train_set_int_bind_B %>% select(-c(X, Y)), mtry = 3, ntree = 400, cutoff = c(1-cutoff, cutoff))
+
+
+rf_predictions_final_int = predict(fit_rf_final_int, test_set_int_B, type = "response")
+classification_error(rf_predictions_final_int, test_set_B$ExpertLabel)
+classification_error(rf_predictions_final, test_set_B$ExpertLabel)
+
+errors = c(Previous = classification_error(rf_predictions_final, test_set_B$ExpertLabel),Adjusted = classification_error(rf_predictions_final_int, test_set_B$ExpertLabel))
+errors
+
+```
+
+```{r}
+p_test_map_mis_int = p_test_map +   
+  geom_point(data = test_set_B %>% filter(as.character(ExpertLabel)!=as.character(rf_predictions_final_int)), 
+             aes(x = X, y = -Y), color = "red", size = 0.00001) + labs(title = "Misclassifications")
+
+p_4bmaps_int = grid.arrange(p_full_map, p_test_map, p_test_map_mis_int, nrow = 1)
+#ggsave("4bmaps_int.png", p_4bmaps_int, width = 10, height = 5)
+```
+
+##4(d): Data Split
+We have already looked into this before. We will look at this for our final model again.
+
+###Convergence
+```{r}
+n = c()
+accuracies_n = c()
+fit_time = c()
+prediction_time = c()
+for (k in 2:5){#omit k = 1 since we won't get two df with k = 1. 
+
+  con_df = data_split_A(train_set_bind_A, split_k = k)
+  train_1 = filter(con_df, labels == 1) %>% select(-c(X, Y,labels))
+  n = c(n, nrow(train_1))
+  start_time <- Sys.time()
+  rf_fit_1 = randomForest(factor(ExpertLabel)~., data = train_1, mtry = 3)
+  end_time <- Sys.time()
+  fit_time = c(fit_time, as.numeric(end_time - start_time))
+  start_time <- Sys.time()
+  accuracies_n = c(accuracies_n, 1 - classification_error(predict(rf_fit_1, test_set_A), test_set_A$ExpertLabel))
+  end_time <- Sys.time()
+  prediction_time = c(prediction_time, as.numeric(end_time - start_time))
+
+  train_2 = filter(con_df, labels != 1) %>% select(-c(X, Y,labels))
+  n = c(n, nrow(train_2))
+  start_time <- Sys.time()
+  rf_fit_2 = randomForest(factor(ExpertLabel)~., data = train_2, mtry = 3)
+  end_time <- Sys.time()
+  fit_time = c(fit_time, as.numeric(end_time - start_time))
+  start_time <- Sys.time()
+  accuracies_n = c(accuracies_n, 1 - classification_error(predict(rf_fit_2, test_set_A), test_set_A$ExpertLabel))
+  end_time <- Sys.time()
+  prediction_time = c(prediction_time, as.numeric(end_time - start_time))
+
+}
+##################Adding the full size data
+n = c(n, nrow(train_set_A))
+start_time = Sys.time()
+rf_fit = randomForest(factor(ExpertLabel)~., data = train_set_bind_A %>% select(-c(X, Y)), mtry = 3)
+end_time <- Sys.time()
+fit_time = c(fit_time, as.numeric(end_time - start_time))
+start_time <- Sys.time()
+accuracies_n = c(accuracies_n, 1 - classification_error(predict(rf_fit, test_set_A), test_set_A$ExpertLabel))
+end_time <- Sys.time()
+prediction_time = c(prediction_time, as.numeric(end_time - start_time))
+
+```
+
+```{r}
+convergence_A_df = data.frame(n, TestAccuracy = accuracies_n, FitTime = fit_time, PredictionTime = prediction_time)
+p_A_fittime = ggplot(convergence_A_df, aes(x = n, y = FitTime)) + 
+  geom_line(color = "red", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(20000, 140000, 20000)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(size = 10, hjust = 0.5),
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Train Sample Size", y = "Time Cost (Seconds)", title = "Fitting Time Complexity", subtitle = "Data Split:A")
+
+p_A_predictiontime = ggplot(convergence_A_df, aes(x = n, y = PredictionTime)) + 
+  geom_line(color = "red", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(20000, 140000, 20000)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+          plot.subtitle = element_text(size = 10, hjust = 0.5),
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Train Sample Size", y = "Time Cost (Seconds)", title = "Prediction Time Complexity", subtitle = "Data Split:A")
+
+ggplot(convergence_A_df, aes(x = n, y = TestAccuracy)) + 
+  geom_line(color = "red", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(20000, 140000, 20000)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5),           
+        plot.subtitle = element_text(size = 10, hjust = 0.5),
+
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Train Sample Size", y = "Accuracy", title = "Test Accuracy", subtitle = "Data Split:A")
+#ggsave("4dAccuracyConvergence.png", width = 5, height = 4)
+p_Time_A = grid.arrange(p_A_fittime, p_A_predictiontime)
+#ggsave("4dTimeComplexity.png",p_Time_A, width = 8, height = 6)
+```
+
+```{r}
+ntrees = seq(100,1000, by = 50)
+accuracies_ntree = c()
+prediction_time_ntree = c()
+fit_time_ntree = c()
+
+for(ntree in ntrees){
+  cat(paste("Working on ntree = ",ntree, sep = ""))
+  start_time <- Sys.time()
+  rf_fit_1 = randomForest(factor(ExpertLabel)~., data = train_set_bind_A %>% select(-c(X, Y)), mtry = 3, ntree = ntree)
+  end_time <- Sys.time()
+  fit_time_ntree = c(fit_time_ntree, as.numeric(end_time - start_time))
+  start_time <- Sys.time()
+  accuracies_ntree = c(accuracies_ntree, 1 - classification_error(predict(rf_fit_1, test_set_A), test_set_A$ExpertLabel))
+  end_time <- Sys.time()
+  prediction_time_ntree = c(prediction_time_ntree, as.numeric(end_time - start_time))
+}
+
+```
+```{r}
+for (i in 1:length(fit_time_ntree)){#Fixing a bug: the unit of time changed to minutes for some large ntrees
+  if (fit_time_ntree[i] < 3){
+    fit_time_ntree[i] = fit_time_ntree[i] * 60
+  }
+}
+
+
+ntree_A_df = data.frame(ntrees, TestAccuracy = accuracies_ntree, FitTime = fit_time_ntree, PredictionTime = prediction_time_ntree)
+p_fittime_ntree_A = ggplot(ntree_A_df, aes(x = ntrees, y = FitTime)) + 
+  geom_line(color = "red", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(100, 1000, 50)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Number of Trees", y = "Time Cost (Seconds)", title = "Fitting Time Complexity")
+
+p_predictiontime_ntree_A = ggplot(ntree_A_df, aes(x = ntrees, y = PredictionTime)) + 
+  geom_line(color = "red", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(100, 1000, 50)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Number of Trees", y = "Time Cost (Seconds)", title = "Prediction Time Complexity")
+p_Time_ntree_A = grid.arrange(p_fittime_ntree_A, p_predictiontime_ntree_A)
+ggsave("TimeComplexity_ntree_A_4d.png",p_Time_ntree_A, width = 8, height = 6)
+
+ggplot(ntree_A_df, aes(x = ntrees, y = TestAccuracy)) + 
+  geom_line(color = "red", size = 1) + 
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = seq(100, 1000, 50)) +
+  theme_bw() + 
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    ) +
+  labs(x = "Number of Trees", y = "Accuracy", title = "Test Accuracy")
+ggsave("TestAccuracy_ntree_A_4d.png", width = 5, height = 4)
+```
+
+The best one is ntree = 850
+```{r}
+rf_fit_A = randomForest(factor(ExpertLabel)~., data = train_set_bind_A %>% select(-c(X, Y)), ntree = 850)
+
+rf_predictions_final_A = predict(rf_fit_A, test_set_A, type = "response")
+```
+
+```{r}
+p_full_map_A = ggplot(rbind(train_set_bind_A, test_set_A), aes(x = X, y = -Y)) +
+  geom_point(aes(col = as.character(ExpertLabel)), size = 0.0001) +
+  scale_color_manual(label = c("Clear", "Cloud"),values = c("black","white")) +
+                       theme_dark()+
+  theme( plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+         plot.background = element_rect(fill="gray90"),
+         axis.title = element_text(size = 8, face = "bold"),
+          legend.title = element_text(size = 8, face = "bold"),
+         legend.text = element_text(size = 5, face = "bold"),
+         legend.background = element_rect(fill="gray90", size=.5, linetype="dotted"),
+                  legend.position = "bottom"
+    ) +
+  guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "X", y = "Y", color = "Expert Label", title = "Full Map")
+
+p_test_map_A = ggplot(test_set_A, aes(x = X, y = -Y)) +
+  geom_point(aes(col = as.character(ExpertLabel)), size = 0.0001) +
+  scale_color_manual(label = c("Clear", "Cloud"),values = c("black","white")) +
+                       theme_dark()+
+  theme( plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+         plot.background = element_rect(fill="gray90"),
+         axis.title = element_text(size = 8, face = "bold"),
+          legend.title = element_text(size = 8, face = "bold"),
+         legend.text = element_text(size = 5, face = "bold"),
+         legend.background = element_rect(fill="gray90", size=.5, linetype="dotted"),
+         legend.position = "bottom"
+    ) +
+  guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "X", y = "Y", color = "Expert Label", title = "Test Map")
+p_test_map_mis_A = p_test_map_A +   
+  geom_point(data = test_set_A %>% filter(as.character(ExpertLabel)!=as.character(rf_predictions_final_A)), 
+             aes(x = X, y = -Y), color = "red", size = 0.00001) + labs(title = "Misclassifications")
+
+
+p_4dmaps_A = grid.arrange(p_full_map_A, p_test_map_A, p_test_map_mis_A, nrow = 1)
+#ggsave("4d_A_maps.png", p_4dmaps_A, width = 10, height = 5)
+```
+

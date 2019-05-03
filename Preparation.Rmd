@@ -1,0 +1,331 @@
+---
+title: "Preparation"
+author: "Shichun Wang"
+date: "April 19th, 2019"
+output: html_document
+---
+
+```{r, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(DataComputing)
+library(gridExtra)
+library(dplyr)
+library(tidyr)
+library(caret)
+library(ggfortify)
+library(MASS)
+library(e1071)
+select = dplyr::select
+theme_update(plot.title = element_text(hjust = 0.5), plot.subtitle = element_text(hjust = 0.5))
+set.seed(04212019)
+```
+
+##Data Importation
+```{r}
+image1 = read.table("image1.txt", header = F)
+image2 = read.table("image2.txt", header = F)
+image3 = read.table("image3.txt", header = F)
+feature_names = c("Y", "X", "ExpertLabel", "NDAI", "SD","CORR","DF", "CF","BF","AF","AN")
+colnames(image1) = feature_names#Changing column names
+colnames(image2) = feature_names
+colnames(image3) = feature_names
+```
+
+##Filter out unlabeled points (These are not needed for classification)
+```{r}
+data1 = image1 %>% filter(ExpertLabel != 0)
+data2 = image2 %>% filter(ExpertLabel != 0)
+data3 = image3 %>% filter(ExpertLabel != 0)
+
+```
+
+
+##(a): Data Split
+First, as mentioned earlier the data are not i.i.d as clouds/clear areas appear in clusters. On the other hand we also need this type of dependence as geographical structure and distances are crucial information. We want to split the data in a way that preserves locality but still randomly assigns points to different test sets for better CV results. Therefore we have come up with two ways to balance these two objectives:
+
+###Small Grid + Random Assignment of Points
+The first method is to break the data set into small grids based on coordinates. Then within each grid we randomly assign 1/3 of the points to test, train, and validation. This ensures that randomness happens without breaking the locality structure. We choose to have grids that are 10*10 for each data set.
+```{r}
+data_split_A = function(data, grid = 10, split_k = 3){
+  data = mutate(data, ID = 1:nrow(data)) %>% 
+    mutate(x_grid = cut(data$X, grid, include.lowest = T, labels = F)) %>% 
+    mutate(y_grid = cut(data$Y, grid, include.lowest = T, labels = F))
+  IDs = c()
+  labels = c()
+  for (i in 1:grid){
+    for(j in 1:grid){
+      subdf = data %>% filter((x_grid == i) & (y_grid == j))
+      ID_temp = subdf$ID
+      if(length(ID_temp) > 0){ #It's possible that there are grids that don't have any labeled points
+        labels = c(labels, createFolds(1:length(ID_temp), k = split_k, list = F))
+      }
+      IDs = c(IDs, ID_temp)
+    }
+  }
+  data = left_join(data, data.frame(ID = IDs, labels = labels), by = c("ID" = "ID")) %>% select(-c("x_grid", "y_grid", "ID"))
+  return(data)
+}
+```
+
+```{r}
+data1_A = data_split_A(data1)
+data2_A = data_split_A(data2)
+data3_A = data_split_A(data3)
+
+summary(data1_A$labels %>% factor()) #Checking if the split is roughly uniform in distribution.
+summary(data2_A$labels %>% factor())
+summary(data3_A$labels %>% factor())
+
+```
+
+###Smaller Grid and Assigning Each Grid to a Set
+One potential criticism for the first method is that it won't preserve the closest locality structure, meaning that the points right next to a specific point could be in any set. To address this problem, we have our second way of splitting the data, which is to break the image into even smaller grid and randomly assigning each grid to a set. We choose the grids to be 20*20 (4 times smaller than the previous small grid).
+
+```{r}
+data_split_B = function(data, grid = 10, split_k = 3){
+  data = mutate(data, ID = 1:nrow(data)) %>% 
+    mutate(x_grid = cut(data$X, grid, include.lowest = T, labels = F)) %>% 
+    mutate(y_grid = cut(data$Y, grid, include.lowest = T, labels = F))
+  labels_grid = createFolds(1:(grid**2), k = split_k, list = F)
+  IDs = c()
+  labels = c()
+  for (i in 1:grid){
+    for(j in 1:grid){
+      subdf = data %>% filter((x_grid == i) & (y_grid == j))
+      ID_temp = subdf$ID
+      if(length(ID_temp) > 0){ #It's possible that there are grids that don't have any labeled points
+        labels = c(labels, rep(labels_grid[(i-1)*grid + j], length(ID_temp)))
+      }
+      IDs = c(IDs, ID_temp)
+    }
+  }
+  data = left_join(data, data.frame(ID = IDs, labels = labels), by = c("ID" = "ID")) %>% select(-c("x_grid", "y_grid", "ID"))
+  return(data)
+}
+```
+
+```{r}
+data1_B = data_split_B(data1)
+data2_B = data_split_B(data2)
+data3_B = data_split_B(data3)
+
+summary(data1_B$labels %>% factor()) #Checking if the split is roughly uniform in distribution.
+summary(data2_B$labels %>% factor()) #Checking if the split is roughly uniform in distribution.
+summary(data3_B$labels %>% factor()) #Checking if the split is roughly uniform in distribution.
+
+```
+
+The split for the second method is not as uniform. This is because within each grid there may be very few labeled points, and we will still assign that whole grid to one of the sets, creating differences. For this reason, we temporarily choose the first method for EDA. The reason why we do this procedure by data set is again to preserve locality. Now that we have split each data set into three sets, we can simply combine all the test sets, validation sets, and train sets across the three data sets.
+
+```{r}
+data_train_A = rbind(filter(data1_A, labels == 1), 
+                   filter(data2_A, labels == 1), 
+                   filter(data3_A, labels == 1)) %>% select(-labels)
+data_validation_A = rbind(filter(data1_A, labels == 2), 
+                        filter(data2_A, labels == 2), 
+                        filter(data3_A, labels == 2)) %>% select(-labels)
+data_test_A = rbind(filter(data1_A, labels == 3), 
+                  filter(data2_A, labels == 3), 
+                  filter(data3_A, labels == 3)) %>% select(-labels)
+
+c(Train_N = nrow(data_train_A), Validation_N = nrow(data_validation_A), Test_N = nrow(data_test_A))
+```
+As you can see, the split is fairly uniform.
+
+##(b): Accuracy of Trivial Classifier -- Baseline
+First of all, we need to implement the loss function for classification. We use the 0-1 classification error described in ISL Chapter 2.2.4, the misclassification rate.
+```{r}
+classification_error = function(pred, actual){#pred and actual are two ordered vectors of the same length
+  if(length(pred) != length(actual)){
+    stop("Vectors Differ in Length")
+  }
+  else{
+    pred = as.character(pred) #Converting to character strings in case we are comparing factors
+    actual = as.character(actual)
+    return(mean(pred!=actual))
+  }
+}
+```
+
+###Trivial Classifier
+```{r}
+trivial_validation = rep(-1, nrow(data_validation_A))
+classification_error(trivial_validation, data_validation_A$ExpertLabel)
+```
+
+The trivial classification misses about 39% of the points in validation set.
+
+```{r}
+trivial_test = rep(-1, nrow(data_test_A))
+classification_error(trivial_test, data_test_A$ExpertLabel)
+```
+
+The trivial classification also misses about 39% of the points in the test set (as expected, the split is quite fair).
+
+We can obviously get a better result than this. This classification will have a high accuracy only if the proportion of "-1"'s is very high. In other words, if the actual labels are sparse, most of which are -1's, then guessing -1 for every row will have a quite high accuracy. This is not the case here. There are about 39% 1's among the -1's.
+
+##(c): First Order Importance
+
+We want the features that are most closely related to the Label variable. To perform a very simple variable importance analysis, we run a simple algorithm with respect to one feature at a time. We will choose LDA here:
+```{r}
+errors_simple = c()
+for (i in 4:11){
+  prediction = predict(lda(ExpertLabel ~ ., data = data_train_A %>% select(ExpertLabel, i)), data_validation_A)$class
+  errors_simple = c(errors_simple, classification_error(prediction, data_validation_A$ExpertLabel))
+}
+names(errors_simple) = colnames(data_train_A)[4:11]
+errors_simple
+```
+
+We see the minimum three are NDAI, CORR and AN. It turns out that these align perfectly with a PCA biplot on the scaled data set. The top two PC explains more than 80% of the variability of the data. The three loading vectors projected on this subspace that are closest to the direction of ExpertLabel (or its opposite direction) are also NDAI, CORR, and AN. 
+
+```{r}
+PCA_fit = princomp(scale(select(data_train_A, 3:11)))
+autoplot(PCA_fit, data_train_A,
+         loadings = TRUE, loadings.colour = c('red', "green", "grey", "blue","grey", "grey", "grey", "grey", "brown"),
+         loadings.label = TRUE, 
+         loadings.label.size = c(10, rep(5, 8)),
+         loadings.label.colour =  c('red', "green", "grey", "blue","grey", "grey", "grey", "grey", "brown")) +
+  labs(title = "PCA Projection on Top 2 PCs") +
+  theme_bw()+
+  theme(panel.background = element_rect(fill = "white", colour = "grey50"),
+          panel.grid.major.y = element_line(colour = "grey80"),
+          panel.grid.minor.y = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.ticks = element_line(),
+          plot.title = element_text(size = 20, face = "bold", hjust = 0.5), 
+          axis.title = element_text(size = 10, face = "bold")
+    )
+#ggsave("PCA_2c.png", width = 10, height = 7)
+```
+
+We can also see the differentiation in box plots 
+```{r}
+p1=ggplot(data_train_A, aes(x=as.factor(ExpertLabel), y=NDAI)) + 
+  theme_bw()+
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("")+theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10))
+p2=ggplot(data_train_A, aes(x=as.factor(ExpertLabel), y=SD)) +  theme_bw()+
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("")+theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10))
+p3=ggplot(data_train_A, aes(x=as.factor(ExpertLabel), y=CORR)) +  theme_bw()+
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("")+theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10))
+p4=ggplot(data_train_A, aes(x=as.factor(ExpertLabel), y=DF)) +  theme_bw()+
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("")+theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10))
+p5=ggplot(data_train_A, aes(x=as.factor(ExpertLabel), y=CF)) +  theme_bw()+
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("")+theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10))
+p6=ggplot(data_train_A, aes(x=as.factor(ExpertLabel), y=BF)) +  theme_bw()+
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("")+theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10))
+p7=ggplot(data_train_A, aes(x=as.factor(ExpertLabel), y=AF)) +  theme_bw()+
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("")+theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10))
+p8=ggplot(data_train_A, aes(x=as.factor(ExpertLabel), y=AN)) +  theme_bw()+
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("")+theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=10))
+title<- "Features vs Expert Labels \n"
+p = grid.arrange(p1, p2, p3, p4,p5,p6, p7, p8, top=title, layout_matrix = matrix(c(1:8), ncol = 4, byrow = T), bottom = "Expert Labels \n Cloud = 1, Clear = -1") 
+#ggsave("boxplot_2c.png", p, width = 10, height = 5)
+```
+
+##(d): Generic CV Function
+```{r}
+CVgeneric = function(classifier, 
+                     train_set = NULL, 
+                     labels = NULL, 
+                     PCA = F,
+                     K = 5, loss = classification_error, cost = 1, split_method = "A",...){ 
+  #classifier: classification method; a string. KNN requires an additional parameter: k
+  #train: training features with X, Y data, excluding labels; a data frame
+  #labels: response variable; a binary vector (of any type)
+  #split_method: A character string ("A" or "B") specifying the data splitting method
+  if (split_method == "A"){
+    data_split = data_split_A
+    if(is.null(train_set)){
+      train_set = rbind(data_train_A, data_validation_A) %>% select(-ExpertLabel)
+    }
+    if(is.null(labels)){
+      labels = c(data_train_A$ExpertLabel, data_validation_A$ExpertLabel)
+    }
+  }
+  else if (split_method == "B"){
+    data_split = data_split_B
+    if(is.null(train_set)){
+      train_set = rbind(data_train_B, data_validation_B) %>% select(-ExpertLabel)
+    }
+    if(is.null(labels)){
+      labels = c(data_train_B$ExpertLabel, data_validation_B$ExpertLabel)
+    }
+  }
+  else {stop("Split Method Not Recognized")}
+  
+  classifier = tolower(classifier) #Making sure everything is lower case
+  data = cbind(ExpertLabel = labels, train_set)
+  data_CV = data_split(data, split_k = K) #using the same spliting method as in 2a
+  classify = function(train, test){ #Helper function that takes care of classification method
+    if (classifier %in% c("glm", "logistic", "logit")){
+      fit = train(factor(ExpertLabel)~., data= train, method = "glm", family = "binomial")
+      type = "raw"
+    }
+    else if(classifier %in% c("lda","qda")){
+      fit = train(factor(ExpertLabel)~., data = train, method = classifier)
+      type = "raw"
+    }
+    else if(classifier == "knn"){
+      if(nrow(train)>= 10000){stop("Data set is too large for KNN")}
+      fit = train(factor(ExpertLabel)~., data = train, method = classifier, preProcess= c("center","scale"))
+      type = "raw"
+    }
+    else if(classifier == "svm"){
+      if (K > 3){stop("K is too large for SVM")}
+      fit = svm(factor(ExpertLabel)~., data = train, ...)
+      type = "raw"
+    }
+    else if(classifier %in% c("rf", "randomforest")){
+      fit = randomForest(formula = factor(ExpertLabel)~., data = train, ...)
+      type = "response"
+    }
+    else{stop("Method not supported")}
+
+    prediction = predict(fit, test, type = type)
+    return(loss(prediction, test$ExpertLabel))
+  }
+  #####CV
+  CV_accuracies = numeric(K)
+  CV_n = numeric(K) #Recording how fair the splitting is
+  for (i in 1:K){
+    print(paste("Working on Fold ", i, " out of ", K, ".", sep = ""))
+    cv_test = filter(data_CV, labels == i) %>% select(-c(Y, X, labels))
+    cv_train = filter(data_CV, labels != i) %>% select(-c(Y, X, labels))
+    if (PCA){#Whether do PCA before hand
+      pca = princomp(scale(cv_train %>% select(-ExpertLabel)))
+      pca_test = predict(pca, scale(cv_test %>% select(-ExpertLabel))) #Need to use the loadings of the training PCA set for testing
+      cv_train = cbind(cv_train %>% select(ExpertLabel), pca$scores)
+      cv_test = cbind(cv_test %>% select(ExpertLabel), pca_test)
+    }
+    
+    CV_n[i] = nrow(cv_test)
+    error = classify(train = cv_train, test = cv_test)
+    CV_accuracies[i] = 1- error
+  }
+  average_accuracy = sum(CV_accuracies*CV_n)/sum(CV_n)
+  if (PCA){method = paste("PCA-", toupper(classifier), sep = "")}
+  else{method = toupper(classifier)}
+  return(list(Accuracies = CV_accuracies, FoldSize = CV_n, method = method, AverageAccuracy = average_accuracy, K = K))
+}
+
+```
+
+

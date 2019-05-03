@@ -1,0 +1,78 @@
+---
+title: "Data Collection and Exploration"
+author: "Shichun Wang"
+date: "April 19th, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+knitr::opts_chunk$set(echo = TRUE)
+library(DataComputing)
+library(gridExtra)
+library(dplyr)
+library(tidyr)
+theme_update(plot.title = element_text(hjust = 0.5), plot.subtitle = element_text(hjust = 0.5))
+```
+
+##Data Importation
+```{r}
+image1 = read.table("image1.txt", header = F)
+image2 = read.table("image2.txt", header = F)
+image3 = read.table("image3.txt", header = F)
+feature_names = c("Y", "X", "ExpertLabel", "NDAI", "SD"," CORR","DF", "CF","BF","AF","AN")
+colnames(image1) = feature_names#Changing column names
+colnames(image2) = feature_names
+colnames(image3) = feature_names
+```
+
+(b): Maps, Trend, Invalid I.I.D Assumptions
+```{r}
+map1 = ggplot(image1, aes(x = X, y = -Y)) +
+  geom_point(aes(col = as.character(ExpertLabel)), size = 0.001) +
+  scale_color_manual(label = c("Clear", "Unlabeled", "Cloud"),values = c("gray50", "black","white")) +
+                       theme_void()+
+  theme( plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+         axis.title = element_text(size = 8, face = "bold"),
+          legend.title = element_text(size = 8, face = "bold"),
+         legend.text = element_text(size = 5, face = "bold"),
+         legend.background = element_rect(fill="gray90", size=.5, linetype="dotted")
+    ) +
+  guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "X", y = "Y", color = "Expert Label", title = "Expert Label Map")
+#ggsave("Map1.png", plot = map1, width = 3, height = 2)
+
+map2 = ggplot(image2, aes(x = X, y = -Y)) +
+  geom_point(aes(col = as.character(ExpertLabel)), size = 0.001) +
+  scale_color_manual(label = c("Clear", "Unlabeled", "Cloud"),values = c("gray50", "black","white")) +
+                       theme_void()+
+  theme( plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+         axis.title = element_text(size = 8, face = "bold"),
+          legend.title = element_text(size = 8, face = "bold"),
+         legend.text = element_text(size = 5, face = "bold"),
+         legend.background = element_rect(fill="gray90", size=.5, linetype="dotted")
+    ) +
+  guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "X", y = "Y", color = "Expert Label", title = "Expert Label Map")
+#ggsave("Map2.png", plot = map2, width = 3, height = 2)
+
+map3 = ggplot(image3, aes(x = X, y = -Y)) +
+  geom_point(aes(col = as.character(ExpertLabel)), size = 0.001) +
+  scale_color_manual(label = c("Clear", "Unlabeled", "Cloud"),values = c("gray50", "black","white")) +
+                       theme_void()+
+  theme( plot.title = element_text(size = 10, face = "bold", hjust = 0.5),
+         axis.title = element_text(size = 8, face = "bold"),
+          legend.title = element_text(size = 8, face = "bold"),
+         legend.text = element_text(size = 5, face = "bold"),
+         legend.background = element_rect(fill="gray90", size=.5, linetype="dotted")
+    ) +
+  guides(colour = guide_legend(override.aes = list(size=3))) +
+  labs(x = "X", y = "Y", color = "Expert Label", title = "Expert Label Map")
+#ggsave("Map3.png", plot = map3, width = 3, height = 2)
+```
+
+
+```{r}
+
+```
+
