@@ -1,6 +1,6 @@
 # Stat154 Project2
 
-Sichun Wang, Yue Chen
+Shichun Wang, Yue Chen
 
 ## Data 
 
