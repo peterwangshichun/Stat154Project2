@@ -20,7 +20,7 @@ To understand the dataset holistically, we attempted to use boxplot and PCA anal
 ## Modeling
 We used five models to classify the data, including Linear Discriminant Analysis (LDA), Quadratic Discriminant Analysis (QDA), Logistic Regression, Support Vector Machine (SVM), and Random Forest. 
 
-We assessed the models through cross validation accuracy, test accuracy, ROC curve and AUC value. Then, we found the cutoff value based on total smallest classification error. 
+We assessed the models through cross validation accuracy, test accuracy, ROC curve and AUC value. Then, we found the cutoff value based on the total smallest classification error. 
 
 ## Diagnostics
 We did in-depth analyses of our model through exploring the model convergence, parameter estimation, and misclassification pattern. We used ggplot2 to create the plots of test accuracy based on the sample size and the parameter, the time complexity of the sample size and the parameter, and the misclassified points on the test set. In order to improve our algorithm, we plotted the features distribution with correct and incorrect classifications that overlie on the histograms of Expert Label.   
