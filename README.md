@@ -1,4 +1,4 @@
-# Stat154Project2
+# Stat154 Project2
 
 Sichun Wang, Yue Chen
 
