@@ -26,4 +26,4 @@ We assessed the models through cross validation accuracy, test accuracy, ROC cur
 We did in-depth analyses of our model through exploring the model convergence, parameter estimation, and misclassification pattern. We used ggplot2 to create the plots of test accuracy based on the sample size and the parameter, the time complexity of the sample size and the parameter, and the misclassified points on the test set. In order to improve our algorithm, we plotted the features distribution with correct and incorrect classifications that overlie on the histograms of Expert Label.   
 
 ## Reference
-[Daytime Arctic Cloud Detection Baesd on Multi-Angle Satellite Data With Case Studies (https://github.com/peterwangshichun/Stat154Project2/blob/master/yu2008.pdf)
+[Daytime Arctic Cloud Detection Baesd on Multi-Angle Satellite Data With Case Studies] (https://github.com/peterwangshichun/Stat154Project2/blob/master/yu2008.pdf)
