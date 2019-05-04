@@ -13,3 +13,17 @@ In order to split the data that follows the independent and identical distributi
 2. We broke the data into small grids based on coordinates and randomly assign each grid to a set.
 
 The baseline test error by setting all point as clear (-1) is 39%.
+
+## Exploratory Data Anlysis
+To understand the dataset holistically, we attempted to use boxplot and PCA analysis to reduce the dimension of the data. We plotted the PCA data projection on the top 2 PCs for visualization. 
+
+## Modeling
+We used five models to classify the data, including Linear Discriminant Analysis (LDA), Quadratic Discriminant Analysis (QDA), Logistic Regression, Support Vector Machine (SVM), and Random Forest. 
+
+We assessed the models through cross validation accuracy, test accuracy, ROC curve and AUC value. Then, we found the cutoff value based on total smallest classification error. 
+
+## Diagnostics
+We did in-depth analyses of our model through exploring the model convergence, parameter estimation, and misclassification pattern. We used ggplot2 to create the plots of test accuracy based on the sample size and the parameter, the time complexity of the sample size and the parameter, and the misclassified points on the test set. In order to improve our algorithm, we plotted the features distribution with correct and incorrect classifications that overlie on the histograms of Expert Label.   
+
+## Source
+We used Rmd files to write the functions and analyze the data. R files were use to sourcing in Rmd files for the purpose of saving time.
